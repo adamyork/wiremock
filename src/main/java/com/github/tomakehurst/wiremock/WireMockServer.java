@@ -25,6 +25,7 @@ import com.github.tomakehurst.wiremock.common.ProxySettings;
 import com.github.tomakehurst.wiremock.core.Container;
 import com.github.tomakehurst.wiremock.core.Options;
 import com.github.tomakehurst.wiremock.core.WireMockApp;
+import com.github.tomakehurst.wiremock.extension.ResponseTransformer;
 import com.github.tomakehurst.wiremock.global.RequestDelayControl;
 import com.github.tomakehurst.wiremock.global.ThreadSafeRequestDelayControl;
 import com.github.tomakehurst.wiremock.http.*;
@@ -75,6 +76,7 @@ public class WireMockServer implements Container, Stubbing {
                 defaultMappingsLoader,
                 mappingsSaver,
                 options.requestJournalDisabled(),
+                options.extensionsOfType(ResponseTransformer.class),
                 this
         );
 
@@ -87,7 +89,9 @@ public class WireMockServer implements Container, Stubbing {
                 new StubResponseRenderer(
                         fileSource.child(FILES_ROOT),
                         wireMockApp.getGlobalSettingsHolder(),
-                        new ProxyResponseRenderer(options.proxyVia(),
+                        new ProxyResponseRenderer(
+                                options.proxyVia(),
+                                options.httpsSettings().trustStore(),
                                 options.shouldPreserveHostHeader(),
                                 options.proxyHostHeader()
                         )

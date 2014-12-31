@@ -15,6 +15,7 @@
  */
 package com.github.tomakehurst.wiremock.core;
 
+import com.github.tomakehurst.wiremock.extension.ResponseTransformer;
 import com.github.tomakehurst.wiremock.global.GlobalSettings;
 import com.github.tomakehurst.wiremock.global.GlobalSettingsHolder;
 import com.github.tomakehurst.wiremock.global.RequestDelayControl;
@@ -28,8 +29,10 @@ import com.github.tomakehurst.wiremock.stubbing.ListStubMappingsResult;
 import com.github.tomakehurst.wiremock.stubbing.StubMapping;
 import com.github.tomakehurst.wiremock.stubbing.StubMappings;
 import com.github.tomakehurst.wiremock.verification.*;
+import com.google.common.collect.ImmutableList;
 
 import java.util.List;
+import java.util.Map;
 
 public class WireMockApp implements StubServer, Admin {
     
@@ -44,6 +47,7 @@ public class WireMockApp implements StubServer, Admin {
     private final MappingsLoader defaultMappingsLoader;
     private final Container container;
     private final MappingsSaver mappingsSaver;
+    private final Map<String, ResponseTransformer> transformers;
 
     public WireMockApp(
             RequestDelayControl requestDelayControl,
@@ -51,6 +55,7 @@ public class WireMockApp implements StubServer, Admin {
             MappingsLoader defaultMappingsLoader,
             MappingsSaver mappingsSaver,
             boolean requestJournalDisabled,
+            Map<String, ResponseTransformer> transformers,
             Container container) {
         this.requestDelayControl = requestDelayControl;
         this.browserProxyingEnabled = browserProxyingEnabled;
@@ -59,6 +64,7 @@ public class WireMockApp implements StubServer, Admin {
         globalSettingsHolder = new GlobalSettingsHolder();
         stubMappings = new InMemoryStubMappings();
         requestJournal = requestJournalDisabled ? new DisabledRequestJournal() : new InMemoryRequestJournal();
+        this.transformers = transformers;
         this.container = container;
         loadDefaultMappings();
     }
@@ -77,13 +83,34 @@ public class WireMockApp implements StubServer, Admin {
     
     @Override
     public ResponseDefinition serveStubFor(Request request) {
-        ResponseDefinition responseDefinition = stubMappings.serveFor(request);
+        ResponseDefinition baseResponseDefinition = stubMappings.serveFor(request);
         requestJournal.requestReceived(request);
+
+        ResponseDefinition responseDefinition = applyTransformations(request,
+                                                                     baseResponseDefinition,
+                                                                     ImmutableList.copyOf(transformers.values()));
+
         if (!responseDefinition.wasConfigured() && request.isBrowserProxyRequest() && browserProxyingEnabled) {
             return ResponseDefinition.browserProxy(request);
         }
 
         return responseDefinition;
+    }
+
+    private ResponseDefinition applyTransformations(Request request,
+                                                    ResponseDefinition responseDefinition,
+                                                    List<ResponseTransformer> transformers) {
+        if (transformers.isEmpty()) {
+            return responseDefinition;
+        }
+
+        ResponseTransformer transformer = transformers.get(0);
+        ResponseDefinition newResponseDef =
+                transformer.applyGlobally() || responseDefinition.hasTransformer(transformer) ?
+                transformer.transform(request, responseDefinition) :
+                responseDefinition;
+
+        return applyTransformations(request, newResponseDef, transformers.subList(1, transformers.size()));
     }
 
     @Override

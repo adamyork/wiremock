@@ -16,21 +16,37 @@
 package com.github.tomakehurst.wiremock.core;
 
 import com.github.tomakehurst.wiremock.common.*;
+import com.github.tomakehurst.wiremock.extension.Extension;
+import com.github.tomakehurst.wiremock.extension.ExtensionLoader;
 import com.github.tomakehurst.wiremock.http.CaseInsensitiveKey;
+import com.google.common.base.Predicate;
+import com.google.common.collect.Maps;
+import com.google.common.io.Resources;
 
 import java.util.List;
+import java.util.Map;
 
 import static com.google.common.collect.Lists.transform;
+import static com.google.common.collect.Maps.newLinkedHashMap;
+import static java.util.Arrays.asList;
 import static java.util.Collections.emptyList;
 
 public class WireMockConfiguration implements Options {
 
     private int portNumber = DEFAULT_PORT;
     private String bindAddress = DEFAULT_BIND_ADDRESS;
-    private Integer httpsPort = null;
-    private String keyStorePath = null;
+
+    private int containerThreads = DEFAULT_CONTAINER_THREADS;
+
+    private int httpsPort = -1;
+    private String keyStorePath = Resources.getResource("keystore").toString();
+    private String keyStorePassword = "password";
+    private String trustStorePath;
+    private String trustStorePassword = "password";
+    private boolean needClientAuth;
+
     private boolean browserProxyingEnabled = false;
-    private ProxySettings proxySettings;
+    private ProxySettings proxySettings = ProxySettings.NO_PROXY;
     private FileSource filesRoot = new SingleRootFileSource("src/test/resources");
     private Notifier notifier = new Slf4jNotifier(false);
     private boolean requestJournalDisabled = false;
@@ -39,6 +55,8 @@ public class WireMockConfiguration implements Options {
     private String proxyUrl;
     private boolean preserveHostHeader;
     private String proxyHostHeader;
+
+    private Map<String, Extension> extensions = newLinkedHashMap();
 
     public static WireMockConfiguration wireMockConfig() {
         return new WireMockConfiguration();
@@ -54,8 +72,33 @@ public class WireMockConfiguration implements Options {
         return this;
     }
 
+    public WireMockConfiguration containerThreads(Integer containerThreads) {
+        this.containerThreads = containerThreads;
+        return this;
+    }
+
     public WireMockConfiguration keystorePath(String path) {
         this.keyStorePath = path;
+        return this;
+    }
+
+    public WireMockConfiguration keystorePassword(String keyStorePassword) {
+        this.keyStorePassword = keyStorePassword;
+        return this;
+    }
+
+    public WireMockConfiguration trustStorePath(String truststorePath) {
+        this.trustStorePath = truststorePath;
+        return this;
+    }
+
+    public WireMockConfiguration trustStorePassword(String trustStorePassword) {
+        this.trustStorePassword = trustStorePassword;
+        return this;
+    }
+
+    public WireMockConfiguration needClientAuth(boolean gottaHaveIt) {
+        this.needClientAuth=gottaHaveIt;
         return this;
     }
 
@@ -97,7 +140,7 @@ public class WireMockConfiguration implements Options {
         this.notifier = notifier;
         return this;
     }
-    
+
     public WireMockConfiguration bindAddress(String bindAddress){
         this.bindAddress = bindAddress;
         return this;
@@ -127,23 +170,42 @@ public class WireMockConfiguration implements Options {
         this.proxyHostHeader = hostHeaderValue;
         return this;
     }
-    
+
+    public WireMockConfiguration extensions(String... classNames) {
+        extensions.putAll(ExtensionLoader.load(classNames));
+        return this;
+    }
+
+    public WireMockConfiguration extensions(Extension... extensionInstances) {
+        extensions.putAll(ExtensionLoader.asMap(asList(extensionInstances)));
+        return this;
+    }
+
+    public WireMockConfiguration extensions(Class<? extends Extension>... classes) {
+        extensions.putAll(ExtensionLoader.load(classes));
+        return this;
+    }
+
     @Override
     public int portNumber() {
         return portNumber;
     }
 
     @Override
+    public int containerThreads() {
+        return containerThreads;
+    }
+
+    @Override
     public HttpsSettings httpsSettings() {
-        if (httpsPort == null) {
-            return HttpsSettings.NO_HTTPS;
-        }
-
-        if (keyStorePath == null) {
-            return new HttpsSettings(httpsPort);
-        }
-
-        return new HttpsSettings(httpsPort, keyStorePath);
+        return new HttpsSettings.Builder()
+                .port(httpsPort)
+                .keyStorePath(keyStorePath)
+                .keyStorePassword(keyStorePassword)
+                .trustStorePath(trustStorePath)
+                .trustStorePassword(trustStorePassword)
+                .needClientAuth(needClientAuth)
+                .build();
     }
 
     @Override
@@ -174,7 +236,7 @@ public class WireMockConfiguration implements Options {
     public String bindAddress() {
         return bindAddress;
     }
-    
+
     @Override
     public List<CaseInsensitiveKey> matchingHeaders() {
     	return matchingHeaders;
@@ -192,5 +254,15 @@ public class WireMockConfiguration implements Options {
 
     public String proxyHostHeader() {
         return proxyHostHeader;
+    }
+
+    @Override
+    @SuppressWarnings("unchecked")
+    public <T extends Extension> Map<String, T> extensionsOfType(final Class<T> extensionType) {
+        return (Map<String, T>) Maps.filterEntries(extensions, new Predicate<Map.Entry<String, Extension>>() {
+            public boolean apply(Map.Entry<String, Extension> input) {
+                return extensionType.isAssignableFrom(input.getValue().getClass());
+            }
+        });
     }
 }

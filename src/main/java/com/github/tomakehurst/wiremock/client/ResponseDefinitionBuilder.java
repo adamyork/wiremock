@@ -20,6 +20,7 @@ import com.github.tomakehurst.wiremock.http.Fault;
 import com.github.tomakehurst.wiremock.http.HttpHeader;
 import com.github.tomakehurst.wiremock.http.HttpHeaders;
 import com.github.tomakehurst.wiremock.http.ResponseDefinition;
+import com.google.common.collect.Lists;
 
 import java.nio.charset.Charset;
 import java.util.List;
@@ -27,6 +28,7 @@ import java.util.List;
 import static com.google.common.base.Charsets.UTF_8;
 import static com.google.common.collect.Lists.newArrayList;
 import static java.net.HttpURLConnection.HTTP_OK;
+import static java.util.Arrays.asList;
 
 public class ResponseDefinitionBuilder {
 
@@ -38,6 +40,23 @@ public class ResponseDefinitionBuilder {
 	protected Integer fixedDelayMilliseconds;
 	protected String proxyBaseUrl;
 	protected Fault fault;
+	protected List<String> responseTransformerNames;
+
+	public static ResponseDefinitionBuilder like(ResponseDefinition responseDefinition) {
+		ResponseDefinitionBuilder builder = new ResponseDefinitionBuilder();
+		builder.status = responseDefinition.getStatus();
+		builder.headers = responseDefinition.getHeaders() != null ?
+				newArrayList(responseDefinition.getHeaders().all()) :
+				Lists.<HttpHeader>newArrayList();
+		builder.bodyContent = responseDefinition.getByteBody();
+		builder.isBinaryBody = responseDefinition.specifiesBinaryBodyContent();
+		builder.bodyFileName = responseDefinition.getBodyFileName();
+		builder.fixedDelayMilliseconds = responseDefinition.getFixedDelayMilliseconds();
+		builder.proxyBaseUrl = responseDefinition.getProxyBaseUrl();
+		builder.fault = responseDefinition.getFault();
+		builder.responseTransformerNames = responseDefinition.getResponseTransformers();
+		return builder;
+	}
 
     public static ResponseDefinition jsonResponse(Object body) {
         return new ResponseDefinitionBuilder()
@@ -46,6 +65,10 @@ public class ResponseDefinitionBuilder {
                 .withHeader("Content-Type", "application/json")
                 .build();
     }
+
+	public ResponseDefinitionBuilder but() {
+		return this;
+	}
 	
 	public ResponseDefinitionBuilder withStatus(int status) {
 		this.status = status;
@@ -78,7 +101,12 @@ public class ResponseDefinitionBuilder {
         this.fixedDelayMilliseconds = milliseconds;
         return this;
     }
-	
+
+	public ResponseDefinitionBuilder withTransform(String... responseTransformerNames) {
+		this.responseTransformerNames = asList(responseTransformerNames);
+		return this;
+	}
+
 	public ProxyResponseDefinitionBuilder proxiedFrom(String proxyBaseUrl) {
 		this.proxyBaseUrl = proxyBaseUrl;
 		return new ProxyResponseDefinitionBuilder(this);
@@ -97,6 +125,7 @@ public class ResponseDefinitionBuilder {
 			this.fixedDelayMilliseconds = from.fixedDelayMilliseconds;
 			this.isBinaryBody = from.isBinaryBody;
 			this.proxyBaseUrl = from.proxyBaseUrl;
+			this.responseTransformerNames = from.responseTransformerNames;
 		}
 
 		public ProxyResponseDefinitionBuilder withAdditionalRequestHeader(String key, String value) {
@@ -142,6 +171,7 @@ public class ResponseDefinitionBuilder {
 		response.setFixedDelayMilliseconds(fixedDelayMilliseconds);
 		response.setProxyBaseUrl(proxyBaseUrl);
 		response.setFault(fault);
+		response.setResponseTransformers(responseTransformerNames);
 		return response;
 	}
 }

@@ -15,11 +15,19 @@
  */
 package com.github.tomakehurst.wiremock.standalone;
 
+import java.io.IOException;
+import java.io.StringWriter;
+import java.net.URI;
+import java.util.Collections;
+import java.util.List;
+import java.util.Map;
+
 import com.github.tomakehurst.wiremock.WireMockServer;
 import com.github.tomakehurst.wiremock.common.*;
 import com.github.tomakehurst.wiremock.core.Options;
+import com.github.tomakehurst.wiremock.extension.Extension;
+import com.github.tomakehurst.wiremock.extension.ExtensionLoader;
 import com.github.tomakehurst.wiremock.http.CaseInsensitiveKey;
-import com.google.common.base.Joiner;
 import com.google.common.base.Strings;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
@@ -28,15 +36,8 @@ import com.google.common.collect.UnmodifiableIterator;
 import joptsimple.OptionParser;
 import joptsimple.OptionSet;
 
-import java.io.IOException;
-import java.io.StringWriter;
-import java.net.URI;
-import java.util.Collections;
-import java.util.List;
-import java.util.Map;
-
-import static com.github.tomakehurst.wiremock.common.ProxySettings.NO_PROXY;
-import static com.github.tomakehurst.wiremock.http.CaseInsensitiveKey.TO_CASE_INSENSITIVE_KEYS;
+import static com.github.tomakehurst.wiremock.common.ProxySettings.*;
+import static com.github.tomakehurst.wiremock.http.CaseInsensitiveKey.*;
 
 public class CommandLineOptions implements Options {
 	
@@ -50,10 +51,16 @@ public class CommandLineOptions implements Options {
     private static final String BIND_ADDRESS = "bind-address";
     private static final String HTTPS_PORT = "https-port";
     private static final String HTTPS_KEYSTORE = "https-keystore";
-	private static final String VERBOSE = "verbose";
-	private static final String ENABLE_BROWSER_PROXYING = "enable-browser-proxying";
+    private static final String HTTPS_KEYSTORE_PASSWORD = "keystore-password";
+    private static final String HTTPS_TRUSTSTORE = "https-truststore";
+    private static final String HTTPS_TRUSTSTORE_PASSWORD = "truststore-password";
+    private static final String REQUIRE_CLIENT_CERT = "https-require-client-cert";
+    private static final String VERBOSE = "verbose";
+    private static final String ENABLE_BROWSER_PROXYING = "enable-browser-proxying";
     private static final String DISABLE_REQUEST_JOURNAL = "no-request-journal";
+    private static final String EXTENSIONS = "extensions";
     private static final String ROOT_DIR = "root-dir";
+    private static final String CONTAINER_THREADS = "container-threads";
 
     private final OptionSet optionSet;
 	private String helpText;
@@ -63,8 +70,13 @@ public class CommandLineOptions implements Options {
 		optionParser.accepts(PORT, "The port number for the server to listen on").withRequiredArg();
         optionParser.accepts(HTTPS_PORT, "If this option is present WireMock will enable HTTPS on the specified port").withRequiredArg();
         optionParser.accepts(BIND_ADDRESS, "The IP to listen connections").withRequiredArg();
-        optionParser.accepts(HTTPS_KEYSTORE, "Path to an alternative keystore for HTTPS. Must have a password of \"password\".").withRequiredArg();
-		optionParser.accepts(PROXY_ALL, "Will create a proxy mapping for /* to the specified URL").withRequiredArg();
+        optionParser.accepts(CONTAINER_THREADS, "The number of container threads").withRequiredArg();
+        optionParser.accepts(REQUIRE_CLIENT_CERT, "Make the server require a trusted client certificate to enable a connection");
+        optionParser.accepts(HTTPS_TRUSTSTORE_PASSWORD, "Password for the trust store").withRequiredArg();
+        optionParser.accepts(HTTPS_TRUSTSTORE, "Path to an alternative truststore for HTTPS client certificates. Must have a password of \"password\".").requiredIf(REQUIRE_CLIENT_CERT).withRequiredArg();
+        optionParser.accepts(HTTPS_KEYSTORE_PASSWORD, "Password for the alternative keystore.").withRequiredArg().defaultsTo("password");
+        optionParser.accepts(HTTPS_KEYSTORE, "Path to an alternative keystore for HTTPS. Password is assumed to be \"password\" if not specified.").requiredIf(HTTPS_TRUSTSTORE).requiredIf(HTTPS_KEYSTORE_PASSWORD).withRequiredArg();
+        optionParser.accepts(PROXY_ALL, "Will create a proxy mapping for /* to the specified URL").withRequiredArg();
         optionParser.accepts(PRESERVE_HOST_HEADER, "Will transfer the original host header from the client to the proxied service");
         optionParser.accepts(PROXY_VIA, "Specifies a proxy server to use when routing proxy mapped requests").withRequiredArg();
 		optionParser.accepts(RECORD_MAPPINGS, "Enable recording of all (non-admin) requests as mapping files");
@@ -73,6 +85,7 @@ public class CommandLineOptions implements Options {
 		optionParser.accepts(VERBOSE, "Enable verbose logging to stdout");
 		optionParser.accepts(ENABLE_BROWSER_PROXYING, "Allow wiremock to be set as a browser's proxy server");
         optionParser.accepts(DISABLE_REQUEST_JOURNAL, "Disable the request journal (to avoid heap growth when running wiremock for long periods without reset)");
+        optionParser.accepts(EXTENSIONS, "Matching and/or response transformer extension class names, comma separated.").withRequiredArg();
 		optionParser.accepts(HELP, "Print this message");
 		
 		optionSet = optionParser.parse(args);
@@ -146,19 +159,19 @@ public class CommandLineOptions implements Options {
 
     @Override
     public HttpsSettings httpsSettings() {
-        if (!optionSet.has(HTTPS_PORT)) {
-            return HttpsSettings.NO_HTTPS;
-        }
-
-        if (optionSet.has(HTTPS_KEYSTORE)) {
-            return new HttpsSettings(httpsPortNumber(), (String) optionSet.valueOf(HTTPS_KEYSTORE));
-        }
-
-        return new HttpsSettings(httpsPortNumber());
+        return new HttpsSettings.Builder()
+                .port(httpsPortNumber())
+                .keyStorePath((String) optionSet.valueOf(HTTPS_KEYSTORE))
+                .keyStorePassword((String) optionSet.valueOf(HTTPS_KEYSTORE_PASSWORD))
+                .trustStorePath((String) optionSet.valueOf(HTTPS_TRUSTSTORE))
+                .trustStorePassword((String) optionSet.valueOf(HTTPS_TRUSTSTORE_PASSWORD))
+                .needClientAuth(optionSet.has(REQUIRE_CLIENT_CERT)).build();
     }
 
     private int httpsPortNumber() {
-        return Integer.parseInt((String) optionSet.valueOf(HTTPS_PORT));
+        return optionSet.has(HTTPS_PORT) ?
+                Integer.parseInt((String) optionSet.valueOf(HTTPS_PORT)) :
+                -1;
     }
 
     public boolean help() {
@@ -189,6 +202,16 @@ public class CommandLineOptions implements Options {
     }
 
     @Override
+    public <T extends Extension> Map<String, T> extensionsOfType(Class<T> extensionType) {
+        if (optionSet.has(EXTENSIONS)) {
+            String classNames = (String) optionSet.valueOf(EXTENSIONS);
+            return ExtensionLoader.loadExtension(classNames.split(","));
+        }
+
+        return Collections.emptyMap();
+    }
+
+    @Override
     public boolean browserProxyingEnabled() {
 		return optionSet.has(ENABLE_BROWSER_PROXYING);
 	}
@@ -216,6 +239,15 @@ public class CommandLineOptions implements Options {
     @Override
     public boolean requestJournalDisabled() {
         return optionSet.has(DISABLE_REQUEST_JOURNAL);
+    }
+
+    @Override
+    public int containerThreads() {
+        if (optionSet.has(CONTAINER_THREADS)) {
+            return Integer.parseInt((String) optionSet.valueOf(CONTAINER_THREADS));
+        }
+
+        return DEFAULT_CONTAINER_THREADS;
     }
 
     @Override
